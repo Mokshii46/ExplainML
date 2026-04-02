@@ -1,0 +1,17 @@
+    # Virtual environments
+venv/
+*/venv/
+
+# Python cache
+__pycache__/
+*.pyc
+
+# Environment files
+.env
+
+# Node modules (frontend)
+node_modules/
+
+# OS junk
+.DS_Store
+Thumbs.db

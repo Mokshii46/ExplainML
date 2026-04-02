@@ -1,0 +1,129 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>ModelIQ — Explainable AutoML Advisor</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Space+Mono:wght@400;700&family=DM+Sans:wght@300;400;500;600&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/static/style.css"/>
+</head>
+<body>
+
+<!-- ── HEADER ─────────────────────────────────────────────────── -->
+<header class="header">
+  <div class="logo">
+    <span class="logo-icon">⬡</span>
+    <span class="logo-text">Model<em>IQ</em></span>
+  </div>
+  <p class="tagline">Upload your data. Understand your model. Trust your results.</p>
+</header>
+
+<!-- ── UPLOAD SECTION ─────────────────────────────────────────── -->
+<main>
+  <section class="upload-section" id="uploadSection">
+    <div class="upload-card">
+      <div class="upload-area" id="dropZone">
+        <div class="upload-icon">⬆</div>
+        <p class="upload-title">Drop your dataset here</p>
+        <p class="upload-sub">CSV, XLSX or JSON · min 20 rows</p>
+        <input type="file" id="fileInput" accept=".csv,.xlsx,.xls,.json" hidden/>
+        <button class="btn-primary" onclick="document.getElementById('fileInput').click()">Browse Files</button>
+      </div>
+
+      <div class="file-info hidden" id="fileInfo">
+        <div class="file-badge">
+          <span class="file-name" id="fileName">—</span>
+          <button class="clear-btn" onclick="clearFile()">✕</button>
+        </div>
+        <div class="preview-area" id="previewArea"></div>
+
+        <div class="target-select-area" id="targetSelectArea">
+          <label class="select-label">Select Target Column</label>
+          <select id="targetSelect" class="target-select">
+            <option value="">— choose target —</option>
+          </select>
+          <p class="hint">The column you want the model to predict.</p>
+          <button class="btn-primary btn-analyze" id="analyzeBtn" onclick="runAnalysis()" disabled>
+            <span class="btn-text">Analyze Dataset</span>
+            <span class="btn-spinner hidden" id="btnSpinner">◌</span>
+          </button>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ── LOADING ────────────────────────────────────────────────── -->
+  <section class="loading-section hidden" id="loadingSection">
+    <div class="pipeline">
+      <div class="pipeline-step active" id="step1"><span class="step-icon">🔍</span><span>Detecting Problem Type</span></div>
+      <div class="pipeline-arrow">→</div>
+      <div class="pipeline-step" id="step2"><span class="step-icon">⚙</span><span>Preprocessing</span></div>
+      <div class="pipeline-arrow">→</div>
+      <div class="pipeline-step" id="step3"><span class="step-icon">🧠</span><span>Feature Intelligence</span></div>
+      <div class="pipeline-arrow">→</div>
+      <div class="pipeline-step" id="step4"><span class="step-icon">🏟</span><span>Training Models</span></div>
+      <div class="pipeline-arrow">→</div>
+      <div class="pipeline-step" id="step5"><span class="step-icon">⚖</span><span>Verdict Engine</span></div>
+    </div>
+    <div class="loading-msg" id="loadingMsg">Initialising analysis pipeline...</div>
+  </section>
+
+  <!-- ── RESULTS ────────────────────────────────────────────────── -->
+  <section class="results-section hidden" id="resultsSection">
+
+    <!-- Winner Banner -->
+    <div class="winner-banner" id="winnerBanner">
+      <div class="winner-label">SELECTED MODEL</div>
+      <div class="winner-name" id="winnerName">—</div>
+      <div class="winner-score" id="winnerScore">—</div>
+      <div class="winner-problem" id="winnerProblem">—</div>
+    </div>
+
+    <!-- Tabs -->
+    <div class="tabs">
+      <button class="tab active" onclick="showTab('leaderboard')">🏆 Leaderboard</button>
+      <button class="tab" onclick="showTab('verdict')">⚖ Verdict Engine</button>
+      <button class="tab" onclick="showTab('features')">🧠 Feature Analysis</button>
+      <button class="tab" onclick="showTab('pipeline')">⚙ Pipeline Log</button>
+    </div>
+
+    <!-- Leaderboard Tab -->
+    <div class="tab-content active" id="tab-leaderboard">
+      <div class="section-title">Model Leaderboard <span class="badge">Composite Score Ranking</span></div>
+      <div id="leaderboardContainer"></div>
+    </div>
+
+    <!-- Verdict Tab -->
+    <div class="tab-content" id="tab-verdict">
+      <div class="section-title">Verdict Engine Breakdown <span class="badge">Deterministic Scoring Rubric</span></div>
+      <div class="rubric-legend" id="rubricLegend"></div>
+      <div id="verdictContainer"></div>
+    </div>
+
+    <!-- Feature Analysis Tab -->
+    <div class="tab-content" id="tab-features">
+      <div class="section-title">Feature Intelligence <span class="badge">Mutual Info + SHAP</span></div>
+      <div id="featuresContainer"></div>
+    </div>
+
+    <!-- Pipeline Log Tab -->
+    <div class="tab-content" id="tab-pipeline">
+      <div class="section-title">Pipeline Trace <span class="badge">Every Decision Logged</span></div>
+      <div id="pipelineContainer"></div>
+    </div>
+
+    <div class="reset-area">
+      <button class="btn-outline" onclick="resetApp()">← Analyze Another Dataset</button>
+    </div>
+
+  </section>
+</main>
+
+<footer class="footer">
+  ModelIQ · Deterministic Intelligence · No LLMs at Runtime · Built for CodeWiser × VJTI Hackathon 2026
+</footer>
+
+<script src="/static/app.js"></script>
+</body>
+</html>
