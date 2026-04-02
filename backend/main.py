@@ -167,11 +167,8 @@ async def analyze(
 
 @app.post("/api/predict")
 async def predict(request: Request):
-    """
-    Predict target value for a new row using the winner model from last analysis.
-    Body: { "inputs": { "col1": val1, "col2": val2, ... } }
-    """
     global _session
+
     if not _session or not _session.get("winner_model"):
         raise HTTPException(status_code=400, detail="No trained model available. Run /api/analyze first.")
 
@@ -184,72 +181,73 @@ async def predict(request: Request):
         target_col   = _session["target_col"]
         original_df  = _session["original_df"]
         feature_names = _session["feature_names"]
-        problem_detection = _session["problem_detection"]
 
-        # Build a 1-row dataframe from user inputs
+        # ✅ Build input row
         row = {}
         for col in original_df.columns:
             if col == target_col:
                 continue
+
             val = inputs.get(col, None)
-            # Try to coerce to original dtype
+
             try:
-                orig_dtype = original_df[col].dtype
-                if pd.api.types.is_numeric_dtype(orig_dtype):
+                if pd.api.types.is_numeric_dtype(original_df[col]):
                     val = float(val) if val not in (None, "", "null") else original_df[col].median()
                 else:
                     val = str(val) if val not in (None, "", "null") else original_df[col].mode()[0]
-            except Exception:
-                val = original_df[col].mode()[0] if len(original_df[col].mode()) > 0 else 0
+            except:
+                val = 0
+
             row[col] = val
 
-        # Create a mini-df with one row and run through full preprocessing
-        # We append it to original_df (without target), preprocess together, take last row
         predict_row = pd.DataFrame([row])
-        
-        # Create a temp df with a dummy target for preprocessing
-        dummy_target_val = original_df[target_col].mode()[0] if problem_type == "classification" else float(original_df[target_col].mean())
-        predict_row[target_col] = dummy_target_val
-        
-        # Append to original for consistent encoding/scaling
-        combined = pd.concat([original_df, predict_row], ignore_index=True)
-        X_combined, y_combined, _ = preprocess(combined, target_col, problem_type)
-        X_selected, _ = analyze_features(X_combined, y_combined, problem_type)
-        
-        # Take only the last row (our prediction row)
-        X_new = X_selected.iloc[[-1]][feature_names] if all(f in X_selected.columns for f in feature_names) else X_selected.iloc[[-1]]
 
-        # Predict
+        # ✅ Add dummy target (needed for preprocessing)
+        dummy_target = (
+            original_df[target_col].mode()[0]
+            if problem_type == "classification"
+            else float(original_df[target_col].mean())
+        )
+        predict_row[target_col] = dummy_target
+
+        # ✅ Combine with original data
+        combined = pd.concat([original_df, predict_row], ignore_index=True)
+
+        # ✅ ONLY preprocess (NO feature selection)
+        X_combined, _, _ = preprocess(combined, target_col, problem_type)
+
+        # ✅ Take last row
+        X_new = X_combined.iloc[[-1]]
+
+        # ✅ Align columns with training
+        for col in feature_names:
+            if col not in X_new.columns:
+                X_new[col] = 0
+
+        X_new = X_new[feature_names]
+
+        # ✅ DEBUG (optional)
+        print("Expected:", len(feature_names))
+        print("Got:", X_new.shape[1])
+
+        # ✅ Predict
         raw_pred = winner_model.predict(X_new.values)[0]
-        
-        # For classification, also get probabilities
+
+        # ✅ Classification extras
         confidence = None
         class_probabilities = None
+
         if problem_type == "classification" and hasattr(winner_model, "predict_proba"):
             proba = winner_model.predict_proba(X_new.values)[0]
             confidence = float(np.max(proba))
-            classes = winner_model.classes_
-            class_probabilities = {str(c): round(float(p), 4) for c, p in zip(classes, proba)}
-
-        # Decode label if classification had string targets
-        decoded_pred = raw_pred
-        if problem_type == "classification":
-            # Try to map back to original class labels
-            orig_classes = original_df[target_col].unique()
-            try:
-                decoded_pred = int(raw_pred)
-                # Map integer back to original label if target was string
-                if original_df[target_col].dtype == object:
-                    sorted_classes = sorted([str(c) for c in orig_classes])
-                    if 0 <= int(raw_pred) < len(sorted_classes):
-                        decoded_pred = sorted_classes[int(raw_pred)]
-            except Exception:
-                decoded_pred = str(raw_pred)
+            class_probabilities = {
+                str(c): round(float(p), 4)
+                for c, p in zip(winner_model.classes_, proba)
+            }
 
         return {
             "status": "success",
-            "prediction": decoded_pred if not isinstance(decoded_pred, (np.integer, np.floating)) else decoded_pred.item(),
-            "raw_prediction": float(raw_pred) if isinstance(raw_pred, (np.integer, np.floating)) else str(raw_pred),
+            "prediction": float(raw_pred) if isinstance(raw_pred, (np.integer, np.floating)) else str(raw_pred),
             "problem_type": problem_type,
             "model_used": _session["winner_name"],
             "confidence": confidence,
