@@ -2,25 +2,32 @@
 model_trainer.py
 Trains a fixed set of candidate models and collects structured metrics.
 Uses cross-validation for honest evaluation. No randomness in scoring.
+
+SPEED OPTIMIZATIONS (accuracy-preserving only):
+- n_jobs=-1 on all models + cross_validate (true CPU parallelism)
+- LogisticRegression solver auto-picked per dataset size
+- KNN algorithm='auto' (sklearn picks fastest tree for data shape)
+- All n_estimators=100, max_depth=8, CV_FOLDS=5 kept at original values
+- SHAP sample size capped separately in explainability.py (doesn't affect model)
 """
 
 import numpy as np
 import time
 from sklearn.model_selection import cross_validate, StratifiedKFold, KFold
-from sklearn.ensemble import RandomForestClassifier, RandomForestRegressor, GradientBoostingClassifier, GradientBoostingRegressor
+from sklearn.ensemble import RandomForestClassifier, RandomForestRegressor
+from sklearn.ensemble import GradientBoostingClassifier, GradientBoostingRegressor
 from sklearn.linear_model import LogisticRegression, Ridge
 from sklearn.tree import DecisionTreeClassifier, DecisionTreeRegressor
 from sklearn.neighbors import KNeighborsClassifier, KNeighborsRegressor
-from sklearn.metrics import make_scorer, f1_score, r2_score, mean_absolute_error
+from sklearn.metrics import make_scorer, f1_score
 from typing import Tuple
 import pandas as pd
 
 
-CV_FOLDS = 5
+CV_FOLDS = 5          # Full 5-fold — accuracy preserved
 RANDOM_STATE = 42
 
 
-# Interpretability scores — deterministic, hand-designed rubric
 INTERPRETABILITY = {
     "Decision Tree": 10,
     "Logistic Regression": 9,
@@ -31,31 +38,48 @@ INTERPRETABILITY = {
 }
 
 
-def get_models(problem_type: str) -> dict:
+def get_models(problem_type: str, n_samples: int) -> dict:
+    # Pick fastest accurate LR solver for dataset size — no accuracy trade-off
+    lr_solver = 'lbfgs' if n_samples < 10000 else 'saga'
+
     if problem_type == "classification":
         return {
-            "Logistic Regression": LogisticRegression(max_iter=1000, random_state=RANDOM_STATE),
+            "Logistic Regression": LogisticRegression(
+                max_iter=1000, random_state=RANDOM_STATE, solver=lr_solver, n_jobs=-1
+            ),
             "Decision Tree": DecisionTreeClassifier(max_depth=8, random_state=RANDOM_STATE),
-            "Random Forest": RandomForestClassifier(n_estimators=100, random_state=RANDOM_STATE),
-            "Gradient Boosting": GradientBoostingClassifier(n_estimators=100, random_state=RANDOM_STATE),
-            "K-Nearest Neighbors": KNeighborsClassifier(n_neighbors=5),
+            "Random Forest": RandomForestClassifier(
+                n_estimators=100, random_state=RANDOM_STATE, n_jobs=-1
+            ),
+            "Gradient Boosting": GradientBoostingClassifier(
+                n_estimators=100, random_state=RANDOM_STATE
+            ),
+            "K-Nearest Neighbors": KNeighborsClassifier(
+                n_neighbors=5, algorithm='auto', n_jobs=-1
+            ),
         }
     else:
         return {
             "Ridge Regression": Ridge(alpha=1.0),
             "Decision Tree": DecisionTreeRegressor(max_depth=8, random_state=RANDOM_STATE),
-            "Random Forest": RandomForestRegressor(n_estimators=100, random_state=RANDOM_STATE),
-            "Gradient Boosting": GradientBoostingRegressor(n_estimators=100, random_state=RANDOM_STATE),
-            "K-Nearest Neighbors": KNeighborsRegressor(n_neighbors=5),
+            "Random Forest": RandomForestRegressor(
+                n_estimators=100, random_state=RANDOM_STATE, n_jobs=-1
+            ),
+            "Gradient Boosting": GradientBoostingRegressor(
+                n_estimators=100, random_state=RANDOM_STATE
+            ),
+            "K-Nearest Neighbors": KNeighborsRegressor(
+                n_neighbors=5, algorithm='auto', n_jobs=-1
+            ),
         }
 
 
 def train_and_evaluate(X, y, problem_type: str) -> Tuple[dict, dict]:
-    """
-    Returns (metrics_per_model, trained_models).
-    All metrics are collected via cross-validation — no data leakage.
-    """
-    models = get_models(problem_type)
+    X_arr = X.values if hasattr(X, "values") else X
+    y_arr = y.values if hasattr(y, "values") else y
+    n_samples = X_arr.shape[0]
+
+    models = get_models(problem_type, n_samples)
     results = {}
     trained_models = {}
 
@@ -72,9 +96,6 @@ def train_and_evaluate(X, y, problem_type: str) -> Tuple[dict, dict]:
             "neg_mae": "neg_mean_absolute_error",
         }
 
-    X_arr = X.values if hasattr(X, "values") else X
-    y_arr = y.values if hasattr(y, "values") else y
-
     for name, model in models.items():
         start = time.time()
         try:
@@ -83,16 +104,16 @@ def train_and_evaluate(X, y, problem_type: str) -> Tuple[dict, dict]:
                 cv=cv,
                 scoring=scoring,
                 return_train_score=True,
-                n_jobs=-1,
+                n_jobs=-1,   # parallelize folds across all CPU cores
             )
             elapsed = round(time.time() - start, 3)
 
             if problem_type == "classification":
-                test_acc = float(np.mean(cv_results["test_accuracy"]))
+                test_acc  = float(np.mean(cv_results["test_accuracy"]))
                 train_acc = float(np.mean(cv_results["train_accuracy"]))
-                test_f1 = float(np.mean(cv_results["test_f1_macro"]))
-                train_f1 = float(np.mean(cv_results["train_f1_macro"]))
-                overfit_score = max(0.0, train_acc - test_acc)
+                test_f1   = float(np.mean(cv_results["test_f1_macro"]))
+                train_f1  = float(np.mean(cv_results["train_f1_macro"]))
+                overfit   = max(0.0, train_acc - test_acc)
 
                 results[name] = {
                     "model_name": name,
@@ -101,18 +122,18 @@ def train_and_evaluate(X, y, problem_type: str) -> Tuple[dict, dict]:
                     "train_accuracy": round(train_acc, 4),
                     "test_f1_macro": round(test_f1, 4),
                     "train_f1_macro": round(train_f1, 4),
-                    "overfit_gap": round(overfit_score, 4),
+                    "overfit_gap": round(overfit, 4),
                     "training_time_sec": elapsed,
                     "interpretability_score": INTERPRETABILITY.get(name, 5),
                     "cv_folds": CV_FOLDS,
                     "status": "success",
                 }
             else:
-                test_r2 = float(np.mean(cv_results["test_r2"]))
-                train_r2 = float(np.mean(cv_results["train_r2"]))
-                test_mae = -float(np.mean(cv_results["test_neg_mae"]))
+                test_r2   = float(np.mean(cv_results["test_r2"]))
+                train_r2  = float(np.mean(cv_results["train_r2"]))
+                test_mae  = -float(np.mean(cv_results["test_neg_mae"]))
                 train_mae = -float(np.mean(cv_results["train_neg_mae"]))
-                overfit_score = max(0.0, train_r2 - test_r2)
+                overfit   = max(0.0, train_r2 - test_r2)
 
                 results[name] = {
                     "model_name": name,
@@ -121,22 +142,18 @@ def train_and_evaluate(X, y, problem_type: str) -> Tuple[dict, dict]:
                     "train_r2": round(train_r2, 4),
                     "test_mae": round(test_mae, 4),
                     "train_mae": round(train_mae, 4),
-                    "overfit_gap": round(overfit_score, 4),
+                    "overfit_gap": round(overfit, 4),
                     "training_time_sec": elapsed,
                     "interpretability_score": INTERPRETABILITY.get(name, 5),
                     "cv_folds": CV_FOLDS,
                     "status": "success",
                 }
 
-            # Train final model on full data for SHAP
+            # Train final model on full data for SHAP + prediction endpoint
             model.fit(X_arr, y_arr)
             trained_models[name] = model
 
         except Exception as e:
-            results[name] = {
-                "model_name": name,
-                "status": "failed",
-                "error": str(e),
-            }
+            results[name] = {"model_name": name, "status": "failed", "error": str(e)}
 
     return results, trained_models

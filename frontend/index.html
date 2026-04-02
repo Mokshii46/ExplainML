@@ -46,7 +46,6 @@
           <p class="hint">The column you want the model to predict.</p>
           <button class="btn-primary btn-analyze" id="analyzeBtn" onclick="runAnalysis()" disabled>
             <span class="btn-text">Analyze Dataset</span>
-            <span class="btn-spinner hidden" id="btnSpinner">◌</span>
           </button>
         </div>
       </div>
@@ -78,14 +77,17 @@
       <div class="winner-name" id="winnerName">—</div>
       <div class="winner-score" id="winnerScore">—</div>
       <div class="winner-problem" id="winnerProblem">—</div>
+      <button class="btn-export" onclick="exportPDF()" id="exportBtn">⬇ Export Report PDF</button>
     </div>
 
     <!-- Tabs -->
     <div class="tabs">
-      <button class="tab active" onclick="showTab('leaderboard')">🏆 Leaderboard</button>
-      <button class="tab" onclick="showTab('verdict')">⚖ Verdict Engine</button>
-      <button class="tab" onclick="showTab('features')">🧠 Feature Analysis</button>
-      <button class="tab" onclick="showTab('pipeline')">⚙ Pipeline Log</button>
+      <button class="tab active" id="tabBtn-leaderboard" onclick="showTab('leaderboard', this)">🏆 Leaderboard</button>
+      <button class="tab" id="tabBtn-verdict" onclick="showTab('verdict', this)">⚖ Verdict Engine</button>
+      <button class="tab" id="tabBtn-features" onclick="showTab('features', this)">🧠 Feature Analysis</button>
+      <button class="tab" id="tabBtn-predict" onclick="showTab('predict', this)">🎯 Predict</button>
+      <button class="tab" id="tabBtn-pipeline" onclick="showTab('pipeline', this)">⚙ Pipeline Log</button>
+      <button class="tab" id="tabBtn-learn" onclick="showTab('learn', this)">📚 Learn</button>
     </div>
 
     <!-- Leaderboard Tab -->
@@ -107,10 +109,27 @@
       <div id="featuresContainer"></div>
     </div>
 
+    <!-- ── PREDICT TAB ─────────────────────────────────────────── -->
+    <div class="tab-content" id="tab-predict">
+      <div class="section-title">Predict Engine <span class="badge">Live Inference with Winner Model</span></div>
+      <div class="predict-info" id="predictInfo"></div>
+      <div class="predict-form-grid" id="predictFormGrid"></div>
+      <button class="btn-primary btn-predict" id="predictBtn" onclick="runPrediction()">
+        ⚡ Run Prediction
+      </button>
+      <div class="predict-result hidden" id="predictResult"></div>
+    </div>
+
     <!-- Pipeline Log Tab -->
     <div class="tab-content" id="tab-pipeline">
       <div class="section-title">Pipeline Trace <span class="badge">Every Decision Logged</span></div>
       <div id="pipelineContainer"></div>
+    </div>
+
+    <!-- ── LEARN TAB ───────────────────────────────────────────── -->
+    <div class="tab-content" id="tab-learn">
+      <div class="section-title">Learning Hub <span class="badge">Understand ML from Scratch</span></div>
+      <div id="learnContainer"></div>
     </div>
 
     <div class="reset-area">
