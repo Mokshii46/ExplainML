@@ -5,6 +5,37 @@
 
 ---
 
+## Screenshots
+
+### Upload Interface
+![ModelIQ Upload Screen](docs/screenshots/upload.png)
+*Drop any CSV, XLSX, or JSON file onto the upload zone — minimum 20 rows required.*
+
+### Pipeline in Progress
+![ModelIQ Pipeline Animation](docs/screenshots/pipeline.png)
+*Live pipeline animation showing each stage: Problem Detection → Preprocessing → Feature Intelligence → Training → Verdict Engine.*
+
+### Feature Analysis & Selected Model
+![ModelIQ Feature Analysis](docs/screenshots/feature_analysis.png)
+*The winning model (Logistic Regression, 90.71/100) with SHAP + Mutual Info feature intelligence. PetalWidthCm was pruned via correlation analysis.*
+
+### Live Prediction
+![ModelIQ Live Prediction](docs/screenshots/predict.png)
+*Run live inference through the winning model — here predicting Iris-setosa with 99.1% confidence using Logistic Regression.*
+
+### Sample Analysis Report (PDF)
+A full multi-page PDF report is exported after every analysis. Below is a sample run on the insurance charges dataset:
+
+📄 **[View Sample Report → docs/reports/ModelIQ_Report_Gradient_Boosting.pdf](docs/reports/ModelIQ_Report_Gradient_Boosting.pdf)**
+
+**Report highlights (insurance dataset, 1338 rows, regression):**
+- **Selected model:** Gradient Boosting — Composite Score 85.56 / 100
+- **R²:** 0.852 · **MAE:** 2539.09 · **Overfit gap:** 5.3%
+- **Top feature:** `smoker` (SHAP importance 7911.84) — by far the strongest predictor
+- Runner-up: Decision Tree scored 77.58 (margin: 7.98 points)
+
+---
+
 ## Table of Contents
 
 - [Overview](#overview)
@@ -105,14 +136,14 @@ modeliq/
 
 ## Tech Stack
 
-| Layer     | Technology                                      |
-|-----------|-------------------------------------------------|
-| Backend   | Python 3.10+, FastAPI, Uvicorn                  |
-| ML        | scikit-learn (models, CV, preprocessing, MI)   |
-| Explainability | SHAP (TreeExplainer, LinearExplainer)      |
-| Data      | pandas, numpy, scipy                            |
-| Frontend  | Vanilla HTML/CSS/JS (zero framework)            |
-| PDF Export| jsPDF (client-side, no server dependency)       |
+| Layer | Technology |
+|---|---|
+| Backend | Python 3.10+, FastAPI, Uvicorn |
+| ML | scikit-learn (models, CV, preprocessing, MI) |
+| Explainability | SHAP (TreeExplainer, LinearExplainer) |
+| Data | pandas, numpy, scipy |
+| Frontend | Vanilla HTML/CSS/JS (zero framework) |
+| PDF Export | jsPDF (client-side, no server dependency) |
 
 **No LLMs. No generative AI APIs. No nondeterministic outputs at runtime.**
 
@@ -124,6 +155,14 @@ modeliq/
 modeliq/
 ├── .gitignore
 ├── README.md
+├── docs/
+│   ├── screenshots/
+│   │   ├── upload.png
+│   │   ├── pipeline.png
+│   │   ├── feature_analysis.png
+│   │   └── predict.png
+│   └── reports/
+│       └── ModelIQ_Report_Gradient_Boosting.pdf
 ├── backend/
 │   ├── main.py
 │   ├── requirements.txt
@@ -186,11 +225,11 @@ python main.py
 
 ### Supported File Formats
 
-| Format | Extension        |
-|--------|-----------------|
-| CSV    | `.csv`           |
-| Excel  | `.xlsx`, `.xls`  |
-| JSON   | `.json`          |
+| Format | Extension |
+|---|---|
+| CSV | `.csv` |
+| Excel | `.xlsx`, `.xls` |
+| JSON | `.json` |
 
 Minimum dataset size: **20 rows**.
 
@@ -203,7 +242,7 @@ Minimum dataset size: **20 rows**.
 Determines whether the target column is a **classification** or **regression** problem using a 4-rule priority engine:
 
 | Rule | Condition | Decision |
-|------|-----------|----------|
+|---|---|---|
 | Rule 1 | dtype is object / bool / category | Classification |
 | Rule 2 | ≤ 2 unique values | Classification (binary) |
 | Rule 3 | ≤ 20 unique values AND unique ratio ≤ 5% | Classification |
@@ -216,7 +255,7 @@ Determines whether the target column is a **classification** or **regression** p
 Applies transformations in fixed order. Every step is logged with its rule and rationale.
 
 | Step | Action | Rule |
-|------|--------|------|
+|---|---|---|
 | 1 | Separate target | — |
 | 2 | Drop high-missing columns | Drop if > 50% missing |
 | 3 | Drop high-cardinality categoricals | Drop if > 20 unique values |
@@ -268,7 +307,7 @@ Composite = (r2 × 0.35) + (mae_score × 0.30) + (overfit_penalty × 0.25)
 **Disqualification rules (hard gates before scoring):**
 
 | Rule | Condition |
-|------|-----------|
+|---|---|
 | DQ1 | Accuracy < 50% (classification) |
 | DQ2 | R² < 0.0 (regression) |
 | DQ3 | Overfit gap > 25% |
@@ -293,7 +332,7 @@ SHAP is deterministic given a fixed model and fixed data. No randomness introduc
 ### Classification
 
 | Dimension | Weight | Source |
-|-----------|--------|--------|
+|---|---|---|
 | CV Accuracy | 0.30 | `test_accuracy` from 5-fold CV |
 | Macro F1 | 0.30 | `test_f1_macro` from 5-fold CV |
 | Overfit Penalty | 0.25 | `1 - penalty(train_acc - test_acc)` |
@@ -303,7 +342,7 @@ SHAP is deterministic given a fixed model and fixed data. No randomness introduc
 ### Regression
 
 | Dimension | Weight | Source |
-|-----------|--------|--------|
+|---|---|---|
 | R² Score | 0.35 | `test_r2` from 5-fold CV |
 | MAE Score | 0.30 | Normalised inverse MAE across all models |
 | Overfit Penalty | 0.25 | `1 - penalty(train_r2 - test_r2)` |
@@ -313,7 +352,7 @@ SHAP is deterministic given a fixed model and fixed data. No randomness introduc
 ### Overfit Penalty Table
 
 | Train/Test Gap | Penalty | Label |
-|----------------|---------|-------|
+|---|---|---|
 | ≤ 2% | 0% | No overfitting |
 | 2–5% | 10% | Slight |
 | 5–10% | 25% | Moderate |
@@ -325,7 +364,7 @@ SHAP is deterministic given a fixed model and fixed data. No randomness introduc
 ## API Endpoints
 
 | Method | Endpoint | Description |
-|--------|----------|-------------|
+|---|---|---|
 | GET | `/health` | Health check |
 | POST | `/api/columns` | Upload file → get column names and preview |
 | POST | `/api/analyze` | Upload file + target → run full pipeline, return results |
@@ -366,7 +405,7 @@ ModelIQ helps users make informed decisions about which machine learning model t
 ### Deterministic Intelligence Techniques Used
 
 | Technique | Where Used |
-|-----------|-----------|
+|---|---|
 | **Rules Engine** | Problem Detector (4-rule priority chain), Preprocessor (threshold rules), Disqualification rules in Verdict Engine |
 | **Scoring System** | Verdict Engine — 5-dimension weighted rubric with fixed weight tables |
 | **Decision Trees** | Overfit penalty table, speed scoring table (rule-based binning) |
@@ -377,7 +416,7 @@ ModelIQ helps users make informed decisions about which machine learning model t
 ### Constraint Compliance
 
 | Constraint | Status |
-|------------|--------|
+|---|---|
 | No LLM/generative AI API calls at runtime | ✅ Fully compliant |
 | No Ollama or local LLM at runtime | ✅ Fully compliant |
 | No nondeterministic model outputs for core experience | ✅ All seeds fixed (random_state=42), deterministic CV |
@@ -387,7 +426,7 @@ ModelIQ helps users make informed decisions about which machine learning model t
 ### Judging Rubric Self-Assessment
 
 | Category | Points | Our Approach |
-|----------|--------|-------------|
+|---|---|---|
 | Intelligence Design (30) | Full | Multi-layer rule engine: problem detection → preprocessing rules → feature selection → weighted scoring rubric → disqualification gates |
 | Problem Framing (20) | Full | Real target user: any data analyst or student with a CSV who wants to understand which model to use and why, without needing ML expertise |
 | Explainability (20) | Full | Every preprocessing step logged with rule + rationale; full dimension-score breakdown per model; SHAP values trace predictions to features; PDF report |
