@@ -101,14 +101,12 @@ async def analyze(
         if selected_cols:
             try:
                 chosen = json.loads(selected_cols)
-                # Validate: keep only columns that actually exist (besides target)
                 valid_chosen = [c for c in chosen if c in df.columns and c != target_col]
                 if len(valid_chosen) == 0:
                     raise HTTPException(
                         status_code=400,
                         detail="None of the selected feature columns exist in the dataset."
                     )
-                # Restrict dataframe to chosen features + target
                 df = df[valid_chosen + [target_col]]
             except json.JSONDecodeError:
                 raise HTTPException(status_code=400, detail="Invalid selected_cols format.")
@@ -119,6 +117,9 @@ async def analyze(
         problem_type = problem_detection["problem_type"]
 
         X, y, preprocessing_log = preprocess(df, target_col, problem_type)
+
+        # ── Store label classes from preprocessing  ← NEW
+        label_classes = preprocessing_log.get("label_classes", None)
 
         X_selected, feature_report = analyze_features(X, y, problem_type)
         if X_selected.shape[1] == 0:
@@ -148,6 +149,7 @@ async def analyze(
             "target_col": target_col,
             "original_df": df,
             "problem_detection": problem_detection,
+            "label_classes": label_classes,   # ← NEW: store for predict endpoint
         }
 
         response = {
@@ -165,6 +167,7 @@ async def analyze(
             "explanations": explanations,
             "predict_ready": True,
             "predict_columns": original_cols,
+            "label_classes": label_classes,   # ← NEW: send to frontend
         }
 
         return convert_numpy(response)
@@ -192,6 +195,7 @@ async def predict(request: Request):
         target_col = _session["target_col"]
         original_df = _session["original_df"]
         feature_names = _session["feature_names"]
+        label_classes = _session.get("label_classes", None)   # ← NEW
 
         row = {}
         for col in original_df.columns:
@@ -235,22 +239,46 @@ async def predict(request: Request):
 
         confidence = None
         class_probabilities = None
+        class_probabilities_labeled = None   # ← NEW: with original class names
 
         if problem_type == "classification" and hasattr(winner_model, "predict_proba"):
             proba = winner_model.predict_proba(X_new.values)[0]
             confidence = float(np.max(proba))
+
+            # Raw encoded keys
             class_probabilities = {
                 str(c): round(float(p), 4)
                 for c, p in zip(winner_model.classes_, proba)
             }
 
+            # ← NEW: map encoded int → original label name
+            if label_classes:
+                class_probabilities_labeled = {
+                    label_classes.get(int(c), str(c)): round(float(p), 4)
+                    for c, p in zip(winner_model.classes_, proba)
+                }
+            else:
+                class_probabilities_labeled = class_probabilities
+
+        # Decode the predicted class  ← NEW
+        pred_value = float(raw_pred) if isinstance(raw_pred, (np.integer, np.floating)) else str(raw_pred)
+        pred_label = None
+        if problem_type == "classification" and label_classes:
+            try:
+                pred_label = label_classes.get(int(raw_pred), str(raw_pred))
+            except (ValueError, TypeError):
+                pred_label = str(raw_pred)
+
         response = {
             "status": "success",
-            "prediction": float(raw_pred) if isinstance(raw_pred, (np.integer, np.floating)) else str(raw_pred),
+            "prediction": pred_value,
+            "prediction_label": pred_label,         # ← NEW: e.g. "Iris-setosa"
             "problem_type": problem_type,
             "model_used": _session["winner_name"],
             "confidence": confidence,
             "class_probabilities": class_probabilities,
+            "class_probabilities_labeled": class_probabilities_labeled,  # ← NEW
+            "label_classes": label_classes,         # ← NEW: full mapping for frontend
             "target_column": target_col,
         }
 

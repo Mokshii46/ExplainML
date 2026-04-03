@@ -75,6 +75,7 @@ def preprocess(
             X[col] = le.fit_transform(X[col].astype(str))
 
     # ── Step 7: Encode target (FIXED) ───────────────────────
+    label_classes = None
     if problem_type == "classification":
         target_encoder = LabelEncoder()
         y = pd.Series(
@@ -82,12 +83,23 @@ def preprocess(
             name=target_col
         )
 
+        # Build int→original_label mapping  ← NEW
+        label_classes = {
+            int(enc): str(orig)
+            for orig, enc in zip(
+                target_encoder.classes_,
+                target_encoder.transform(target_encoder.classes_)
+            )
+        }
+
         log.append({
             "step": "Target Encoding",
             "mapping": dict(zip(
                 target_encoder.classes_,
                 target_encoder.transform(target_encoder.classes_)
             )),
+            # Store decoded mapping so callers can look up 0→"Iris-setosa" etc.
+            "label_classes": label_classes,
         })
 
     else:
@@ -98,11 +110,12 @@ def preprocess(
         scaler = StandardScaler()
         X[numeric_cols] = scaler.fit_transform(X[numeric_cols])
 
-    log.append({
-        "step": "Final Feature Matrix",
-        "shape": list(X.shape),
-        "features": list(X.columns),
-        "target_dtype": str(y.dtype),
-    })
+    result_log = {
+        "steps": log,
+        "feature_names": list(X.columns),
+    }
+    # Bubble label_classes up to the top level for easy access in main.py
+    if label_classes is not None:
+        result_log["label_classes"] = label_classes
 
-    return X, y, {"steps": log, "feature_names": list(X.columns)}
+    return X, y, result_log
