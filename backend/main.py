@@ -5,6 +5,7 @@ Explainable AutoML Advisor
 
 import io
 import os
+import json
 import traceback
 import numpy as np
 import pandas as pd
@@ -13,6 +14,7 @@ from fastapi import FastAPI, File, Form, UploadFile, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
+from typing import Optional
 
 from modules.problem_detector import detect_problem_type
 from modules.preprocessor import preprocess
@@ -21,7 +23,7 @@ from modules.model_trainer import train_and_evaluate
 from modules.verdict_engine import run_verdict_engine
 from modules.explainability import generate_explanations
 
-# 🔥 ADDED: Fix numpy → JSON issue
+
 def convert_numpy(obj):
     if isinstance(obj, dict):
         return {k: convert_numpy(v) for k, v in obj.items()}
@@ -78,7 +80,11 @@ async def get_columns(file: UploadFile = File(...)):
 
 
 @app.post("/api/analyze")
-async def analyze(file: UploadFile = File(...), target_col: str = Form(...)):
+async def analyze(
+    file: UploadFile = File(...),
+    target_col: str = Form(...),
+    selected_cols: Optional[str] = Form(None),   # JSON array of user-chosen feature columns
+):
     global _session
     try:
         content = await file.read()
@@ -90,6 +96,24 @@ async def analyze(file: UploadFile = File(...), target_col: str = Form(...)):
             raise HTTPException(status_code=400, detail="Dataset too small (need ≥ 20 rows).")
 
         df = df.dropna(subset=[target_col]).reset_index(drop=True)
+
+        # ── Apply user-chosen feature columns ─────────────────────────────────
+        if selected_cols:
+            try:
+                chosen = json.loads(selected_cols)
+                # Validate: keep only columns that actually exist (besides target)
+                valid_chosen = [c for c in chosen if c in df.columns and c != target_col]
+                if len(valid_chosen) == 0:
+                    raise HTTPException(
+                        status_code=400,
+                        detail="None of the selected feature columns exist in the dataset."
+                    )
+                # Restrict dataframe to chosen features + target
+                df = df[valid_chosen + [target_col]]
+            except json.JSONDecodeError:
+                raise HTTPException(status_code=400, detail="Invalid selected_cols format.")
+
+        original_cols = [c for c in df.columns if c != target_col]
 
         problem_detection = detect_problem_type(df, target_col)
         problem_type = problem_detection["problem_type"]
@@ -115,10 +139,6 @@ async def analyze(file: UploadFile = File(...), target_col: str = Form(...)):
                 winner_name=winner_name,
             )
 
-        _, _, _ = preprocess(df, target_col, problem_type)
-
-        original_cols = [c for c in df.columns if c != target_col]
-
         _session = {
             "winner_name": winner_name,
             "winner_model": trained_models.get(winner_name),
@@ -130,7 +150,6 @@ async def analyze(file: UploadFile = File(...), target_col: str = Form(...)):
             "problem_detection": problem_detection,
         }
 
-        # 🔥 FIXED RETURN
         response = {
             "status": "success",
             "dataset_info": {
