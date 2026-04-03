@@ -26,7 +26,7 @@
 ### Sample Analysis Report (PDF)
 A full multi-page PDF report is exported after every analysis. Below is a sample run on the insurance charges dataset:
 
-📄 **[View Sample Report → docs/reports/ModelIQ_Report_Gradient_Boosting.pdf](docs/reports/ModelIQ_Report_Gradient_Boosting.pdf)**
+📄 [View Sample Report](./docs/reports/ModelIQ_Report_Gradient_Boosting.pdf)
 
 **Report highlights (insurance dataset, 1338 rows, regression):**
 - **Selected model:** Gradient Boosting — Composite Score 85.56 / 100
