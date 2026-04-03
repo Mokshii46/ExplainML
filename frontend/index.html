@@ -39,11 +39,35 @@
         <div class="preview-area" id="previewArea"></div>
 
         <div class="target-select-area" id="targetSelectArea">
+
+          <!-- ── Target Column ── -->
           <label class="select-label">Select Target Column</label>
           <select id="targetSelect" class="target-select">
             <option value="">— choose target —</option>
           </select>
           <p class="hint">The column you want the model to predict.</p>
+
+          <!-- ── Feature Columns ── NEW STYLED SECTION ── -->
+          <div class="feature-selector-section" id="featureSelectorSection" style="display:none">
+            <div class="feature-selector-header">
+              <div class="feature-selector-title">
+                <span class="feature-selector-icon">🧩</span>
+                <span>Select Feature Columns</span>
+              </div>
+              <div class="feature-selector-actions">
+                <button class="feat-action-btn feat-all" onclick="selectAllFeatures()">All</button>
+                <button class="feat-action-btn feat-none" onclick="selectNoneFeatures()">None</button>
+              </div>
+            </div>
+            <p class="feature-selector-hint">Choose which columns the model can learn from. The target column is excluded automatically.</p>
+            <div class="feature-chip-grid" id="featureChipGrid"></div>
+            <div class="feature-selector-footer">
+              <span class="feature-count-label" id="featureCountLabel">0 of 0 feature columns selected</span>
+              <span class="feature-count-dot"></span>
+              <span class="feature-selector-sub">Tip: deselect ID columns or irrelevant features for better accuracy</span>
+            </div>
+          </div>
+
           <button class="btn-primary btn-analyze" id="analyzeBtn" onclick="runAnalysis()" disabled>
             <span class="btn-text">Analyze Dataset</span>
           </button>

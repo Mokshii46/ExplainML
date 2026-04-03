@@ -4,6 +4,9 @@ const API = 'http://localhost:8000';
 let currentFile = null;
 let analysisData = null;
 let predictColumns = [];
+let allFeatureColumns = [];       // all non-target columns from uploaded file
+let selectedFeatureColumns = [];  // currently toggled on
+let labelClasses = null;          // int→original-label mapping for classification
 
 /* ── File Handling ─────────────────────────────────────────── */
 const dropZone = document.getElementById('dropZone');
@@ -42,6 +45,10 @@ async function handleFile(file) {
       sel.appendChild(opt);
     });
 
+    // Store all columns; feature section renders when target is chosen
+    allFeatureColumns = data.columns;
+    selectedFeatureColumns = [...data.columns];
+
     document.getElementById('fileInfo').classList.remove('hidden');
     document.getElementById('uploadSection').querySelector('.upload-area').classList.add('hidden');
 
@@ -65,21 +72,106 @@ function renderPreview(columns, rows) {
 }
 
 document.getElementById('targetSelect').addEventListener('change', function () {
-  document.getElementById('analyzeBtn').disabled = !this.value;
+  const target = this.value;
+  document.getElementById('analyzeBtn').disabled = !target;
+
+  if (target) {
+    // Rebuild feature columns excluding the chosen target
+    const featureCols = allFeatureColumns.filter(c => c !== target);
+    selectedFeatureColumns = [...featureCols];
+    renderFeatureSelector(featureCols, target);
+    document.getElementById('featureSelectorSection').style.display = 'block';
+  } else {
+    document.getElementById('featureSelectorSection').style.display = 'none';
+  }
 });
+
+/* ── Feature Selector ──────────────────────────────────────── */
+function renderFeatureSelector(cols, target) {
+  const grid = document.getElementById('featureChipGrid');
+  grid.innerHTML = '';
+
+  cols.forEach(col => {
+    const chip = document.createElement('button');
+    chip.className = 'feature-chip active';
+    chip.dataset.col = col;
+    chip.innerHTML = `<span class="feat-chip-check">✓</span><span class="feat-chip-label">${esc(col)}</span>`;
+    chip.addEventListener('click', () => toggleFeatureChip(chip, col));
+    grid.appendChild(chip);
+  });
+
+  updateFeatureCount();
+}
+
+function toggleFeatureChip(chip, col) {
+  const isActive = chip.classList.contains('active');
+  chip.classList.toggle('active', !isActive);
+  chip.classList.toggle('inactive', isActive);
+
+  if (isActive) {
+    selectedFeatureColumns = selectedFeatureColumns.filter(c => c !== col);
+  } else {
+    if (!selectedFeatureColumns.includes(col)) selectedFeatureColumns.push(col);
+  }
+
+  updateFeatureCount();
+  updateAnalyzeBtnState();
+}
+
+function updateFeatureCount() {
+  const total = document.querySelectorAll('#featureChipGrid .feature-chip').length;
+  const selected = document.querySelectorAll('#featureChipGrid .feature-chip.active').length;
+  document.getElementById('featureCountLabel').textContent =
+    `${selected} of ${total} feature columns selected`;
+}
+
+function selectAllFeatures() {
+  document.querySelectorAll('#featureChipGrid .feature-chip').forEach(chip => {
+    chip.classList.add('active');
+    chip.classList.remove('inactive');
+  });
+  const target = document.getElementById('targetSelect').value;
+  selectedFeatureColumns = allFeatureColumns.filter(c => c !== target);
+  updateFeatureCount();
+  updateAnalyzeBtnState();
+}
+
+function selectNoneFeatures() {
+  document.querySelectorAll('#featureChipGrid .feature-chip').forEach(chip => {
+    chip.classList.remove('active');
+    chip.classList.add('inactive');
+  });
+  selectedFeatureColumns = [];
+  updateFeatureCount();
+  updateAnalyzeBtnState();
+}
+
+function updateAnalyzeBtnState() {
+  const hasTarget = !!document.getElementById('targetSelect').value;
+  const hasFeatures = selectedFeatureColumns.length > 0;
+  document.getElementById('analyzeBtn').disabled = !(hasTarget && hasFeatures);
+}
 
 function clearFile() {
   currentFile = null;
   fileInput.value = '';
+  allFeatureColumns = [];
+  selectedFeatureColumns = [];
   document.getElementById('fileInfo').classList.add('hidden');
   document.getElementById('uploadSection').querySelector('.upload-area').classList.remove('hidden');
   document.getElementById('analyzeBtn').disabled = true;
+  document.getElementById('featureSelectorSection').style.display = 'none';
 }
 
 /* ── Analysis ──────────────────────────────────────────────── */
 async function runAnalysis() {
   const targetCol = document.getElementById('targetSelect').value;
   if (!currentFile || !targetCol) return;
+
+  if (selectedFeatureColumns.length === 0) {
+    alert('Please select at least one feature column.');
+    return;
+  }
 
   document.getElementById('uploadSection').classList.add('hidden');
   document.getElementById('loadingSection').classList.remove('hidden');
@@ -89,6 +181,7 @@ async function runAnalysis() {
   const formData = new FormData();
   formData.append('file', currentFile);
   formData.append('target_col', targetCol);
+  formData.append('selected_cols', JSON.stringify(selectedFeatureColumns));
 
   try {
     const res = await fetch(`${API}/api/analyze`, { method: 'POST', body: formData });
@@ -102,6 +195,7 @@ async function runAnalysis() {
     }
 
     analysisData = data;
+    labelClasses = data.label_classes || null;   // store globally for predict tab
     predictColumns = data.predict_columns || data.dataset_info.original_columns || [];
     renderResults(data);
 
@@ -367,6 +461,30 @@ function renderPredictForm(data) {
       </div>
     </div>`;
 
+  // ── Label legend for classification  ← NEW
+  if (data.problem_detection.problem_type === 'classification' && data.label_classes) {
+    const lc = data.label_classes;
+    const entries = Object.entries(lc).sort((a, b) => Number(a[0]) - Number(b[0]));
+    let legendHtml = `
+      <div class="label-legend">
+        <div class="label-legend-title">
+          <span class="label-legend-icon">🔑</span>
+          Class Label Key
+          <span class="label-legend-sub">Model outputs encoded integers — here's what they mean</span>
+        </div>
+        <div class="label-legend-chips">`;
+    entries.forEach(([enc, orig]) => {
+      legendHtml += `
+        <div class="label-legend-chip">
+          <span class="label-enc">${esc(enc)}</span>
+          <span class="label-arrow">→</span>
+          <span class="label-orig">${esc(orig)}</span>
+        </div>`;
+    });
+    legendHtml += `</div></div>`;
+    info.innerHTML += legendHtml;
+  }
+
   const cols = predictColumns;
   if (!cols || cols.length === 0) {
     grid.innerHTML = '<p style="color:var(--text-dim);font-family:var(--mono);font-size:0.85rem">No input columns found.</p>';
@@ -412,33 +530,53 @@ async function runPrediction() {
     if (!res.ok) {
       resultBox.innerHTML = `<div class="predict-error">❌ ${esc(data.detail || 'Prediction failed')}</div>`;
     } else {
+      // ── Confidence bar ──
       let confHtml = '';
       if (data.confidence !== null && data.confidence !== undefined) {
         const confPct = (data.confidence * 100).toFixed(1);
-        confHtml = `<div class="predict-confidence">Confidence: <strong>${confPct}%</strong></div>`;
+        const confColor = data.confidence >= 0.75 ? 'var(--green)' : data.confidence >= 0.5 ? 'var(--yellow)' : 'var(--red)';
+        confHtml = `
+          <div class="predict-confidence">
+            Confidence: <strong style="color:${confColor}">${confPct}%</strong>
+          </div>`;
       }
 
+      // ── Class probabilities with ORIGINAL labels  ← NEW ──
       let probaHtml = '';
-      if (data.class_probabilities) {
+      // Prefer labeled version; fall back to raw
+      const probsToShow = data.class_probabilities_labeled || data.class_probabilities;
+      if (probsToShow) {
         probaHtml = '<div class="proba-grid">';
-        Object.entries(data.class_probabilities)
-          .sort((a,b) => b[1]-a[1])
+        Object.entries(probsToShow)
+          .sort((a, b) => b[1] - a[1])
           .forEach(([cls, prob]) => {
             const pct = (prob * 100).toFixed(1);
+            const isTop = prob === Math.max(...Object.values(probsToShow));
             probaHtml += `
-              <div class="proba-item">
+              <div class="proba-item ${isTop ? 'proba-top' : ''}">
                 <span class="proba-label">${esc(cls)}</span>
-                <div class="proba-bar-track"><div class="proba-bar-fill" style="width:${pct}%"></div></div>
-                <span class="proba-val">${pct}%</span>
+                <div class="proba-bar-track">
+                  <div class="proba-bar-fill ${isTop ? 'proba-fill-top' : ''}" style="width:${pct}%"></div>
+                </div>
+                <span class="proba-val ${isTop ? 'proba-val-top' : ''}">${pct}%</span>
               </div>`;
           });
         probaHtml += '</div>';
       }
 
+      // ── Display: decoded label is the hero, raw int is a subtitle  ← NEW ──
+      const predLabel = data.prediction_label;          // e.g. "Iris-setosa"
+      const predRaw   = String(data.prediction);        // e.g. "1"
+      const heroText  = predLabel || predRaw;
+      const subText   = predLabel && predLabel !== predRaw
+        ? `<div class="predict-result-encoded">Encoded value: <code>${esc(predRaw)}</code></div>`
+        : '';
+
       resultBox.innerHTML = `
         <div class="predict-result-card">
           <div class="predict-result-label">Predicted ${esc(data.target_column)}</div>
-          <div class="predict-result-value">${esc(String(data.prediction))}</div>
+          <div class="predict-result-value">${esc(heroText)}</div>
+          ${subText}
           ${confHtml}
           <div class="predict-model-used">Model: ${esc(data.model_used)}</div>
           ${probaHtml}
@@ -518,7 +656,7 @@ function toggleGlossary(id, btn) {
   btn.textContent = open ? 'Read more ▼' : 'Show less ▲';
 }
 
-/* ── PDF Export v4 — Fixed logo, fixed score bar overlap ────────────────────── */
+/* ── PDF Export ─────────────────────────────────────────────── */
 async function exportPDF() {
   if (!analysisData) return;
   const btn = document.getElementById('exportBtn');
@@ -539,11 +677,10 @@ async function exportPDF() {
     const CW = W - PL - PR;
     let y = 0;
 
-    // ── PALETTE ─────────────────────────────────────────────────────────
     const C = {
       navy:     [10,  20,  50],
       navyMid:  [18,  32,  75],
-      accent:   [0,   195, 240],   // matches site cyan
+      accent:   [0,   195, 240],
       accentDk: [0,   140, 190],
       green:    [0,   200, 140],
       greenBg:  [228, 250, 240],
@@ -570,7 +707,6 @@ async function exportPDF() {
     const tx = (str, tx_, ty_, opts={}) => doc.text(String(str), tx_, ty_, opts);
     const sp = (str, maxW) => doc.splitTextToSize(String(str), maxW);
 
-    // Strip ALL non-ASCII and problematic chars — prevents jsPDF garbage
     const safe = (str) => String(str)
       .replace(/[^\x20-\x7E\xC0-\xFF]/g, '')
       .replace(/\s+/g, ' ')
@@ -579,13 +715,11 @@ async function exportPDF() {
     const newPage = () => { doc.addPage(); y = 20; };
     const checkY  = (need=20) => { if (y + need > 276) newPage(); };
 
-    // Progress bar: draws BG then fill, returns nothing. Text must be drawn AFTER.
     const pbar = (bx, by, bw, bh, pct, fillCol, bgCol=C.light) => {
       sf(bgCol); fr(bx, by, bw, bh);
       sf(fillCol); fr(bx, by, bw * Math.min(Math.max(pct, 0) / 100, 1), bh);
     };
 
-    // Section header with left color bar + bold label
     const secHead = (label, col=C.accent) => {
       checkY(16);
       sf(col); fr(PL, y, 3, 9);
@@ -594,7 +728,6 @@ async function exportPDF() {
       y += 14;
     };
 
-    // Status badge pill — text on top of fill, correct z-order
     const badge = (label, bx, by, bgCol, txtCol) => {
       sfont('bold', 6.5);
       const tw = doc.getTextWidth(label);
@@ -602,11 +735,7 @@ async function exportPDF() {
       st(txtCol); tx(label, bx + 2, by);
     };
 
-    // ── ModelIQ logo drawn as vectors ────────────────────────────────
-    // Hexagon outline: 6 line segments, no fill, cyan stroke
-    // Then "Model" white bold + "IQ" cyan bold
     const drawLogo = (lx, ly, hexR, fontSize) => {
-      // Draw hexagon outline (flat-top orientation matching the site icon)
       const cx = lx + hexR;
       const cy = ly + hexR;
       const pts = [];
@@ -619,7 +748,6 @@ async function exportPDF() {
         const next = (i + 1) % 6;
         doc.line(pts[i][0], pts[i][1], pts[next][0], pts[next][1]);
       }
-      // "Model" in white, "IQ" in cyan — side by side
       const textX = lx + hexR * 2 + hexR * 0.7;
       const textY = ly + hexR + fontSize * 0.35;
       sfont('bold', fontSize); st(C.white);
@@ -628,30 +756,17 @@ async function exportPDF() {
       tx('IQ', textX + doc.getTextWidth('Model'), textY);
     };
 
-    // ════════════════════════════════════════════════════════════════════
     // PAGE 1 — COVER
-    // ════════════════════════════════════════════════════════════════════
     sf(C.coverBg); fr(0, 0, W, 297);
-
-    // Top accent stripe
     sf(C.accent); fr(0, 0, W, 3);
-
-    // Subtle side panel
     doc.setGState(new doc.GState({ opacity: 0.06 }));
     sf(C.accent); fr(118, 0, 92, 155);
     doc.setGState(new doc.GState({ opacity: 1 }));
-
-    // ── Logo on cover (large) ─────────────────────────────────────────
     drawLogo(18, 36, 7, 18);
-
-    // Tagline
     sfont('normal', 9.5); st([145, 165, 210]);
     tx('Explainable AutoML Analysis Report', 18, 70);
-
-    // Divider
     sf(C.accent); fr(18, 76, 88, 0.5);
 
-    // ── Metadata block ────────────────────────────────────────────────
     y = 90;
     const meta = [
       ['DATASET',         `${data.dataset_info.rows} rows x ${data.dataset_info.columns} columns`],
@@ -671,19 +786,14 @@ async function exportPDF() {
       y += 9;
     });
 
-    // ── Winner spotlight ──────────────────────────────────────────────
     y = 196;
     sf(C.navyMid); fr(16, y, W - 32, 52);
     sd(C.accent); doc.setLineWidth(0.7); doc.rect(16, y, W - 32, 52, 'S');
-
-    // Green circle indicator
     sf(C.green); doc.circle(25, y + 11.5, 2.8, 'F');
     sfont('normal', 7); st([130, 195, 165]);
     tx('SELECTED MODEL', 30.5, y + 12.8);
-
     sfont('bold', 22); st(C.white);
     tx(winner || 'N/A', 18, y + 29);
-
     if (winnerData) {
       const score = (winnerData.composite_score * 100).toFixed(2);
       sfont('normal', 9); st([155, 178, 218]);
@@ -693,14 +803,11 @@ async function exportPDF() {
       pbar(18, y + 43, CW - 4, 4, parseFloat(score), C.accent, [28, 48, 98]);
     }
 
-    // Cover footer
     sf(C.navyMid); fr(0, 282, W, 15);
     sfont('normal', 6.5); st([105, 125, 168]);
     tx('ModelIQ  |  Deterministic AutoML  |  No LLMs at Runtime  |  CodeWiser x VJTI Hackathon 2026', W / 2, 291, { align: 'center' });
 
-    // ════════════════════════════════════════════════════════════════════
     // PAGE 2 — DATASET SUMMARY + LEADERBOARD
-    // ════════════════════════════════════════════════════════════════════
     newPage();
     sf(C.navy); fr(0, 0, W, 12);
     sfont('bold', 7.5); st(C.white);
@@ -709,7 +816,6 @@ async function exportPDF() {
     tx(new Date().toLocaleDateString(), W - PR, 8, { align: 'right' });
     y = 22;
 
-    // Dataset stat boxes
     secHead('DATASET SUMMARY');
     sf(C.offwhite); fr(PL, y, CW, 24);
     sd(C.border); doc.setLineWidth(0.2); doc.rect(PL, y, CW, 24, 'S');
@@ -730,17 +836,13 @@ async function exportPDF() {
     });
     y += 30;
 
-    // Detection rule
     sf([230, 240, 255]); fr(PL, y, CW, 9);
     sfont('normal', 7.5); st(C.accentDk);
     const rLines = sp('Detection Rule: ' + safe(data.problem_detection.rule_triggered || ''), CW - 8);
     tx(rLines[0], PL + 4, y + 6.5);
     y += 15;
 
-    // Leaderboard
     secHead('MODEL LEADERBOARD');
-
-    // Header row
     sf(C.navy); fr(PL, y, CW, 9);
     sfont('bold', 7.5); st(C.white);
     tx('MODEL',   PL + 4,        y + 6.3);
@@ -765,11 +867,8 @@ async function exportPDF() {
       if (isW) { sf(C.green); fr(PL, y, 3, 11); }
 
       const score100 = ((m.composite_score || 0) * 100).toFixed(1);
-
-      // Score bar first (behind text)
       pbar(PL + 42, y + 3.5, 30, 4, parseFloat(score100), isW ? C.green : C.accent);
 
-      // All text drawn AFTER bar
       sfont(isW ? 'bold' : 'normal', 8.5);
       st(isW ? C.green : (isDQ ? C.textDim : C.textDark));
       tx(m.model_name, PL + (isW ? 6 : 4), y + 7.8);
@@ -803,9 +902,7 @@ async function exportPDF() {
     });
     y += 8;
 
-    // ════════════════════════════════════════════════════════════════════
     // PAGE 3 — VERDICT ENGINE
-    // ════════════════════════════════════════════════════════════════════
     newPage();
     sf(C.navy); fr(0, 0, W, 12);
     sfont('bold', 7.5); st(C.white);
@@ -823,21 +920,18 @@ async function exportPDF() {
     y += 15;
 
     if (winnerData && winnerData.dimension_scores) {
-      // Column layout — everything measured carefully
-      // Row height = 13mm so bar + text both fit
       const ROW_H = 13;
-      const BAR_X = PL + 44;   // bar starts here
-      const BAR_W = 26;         // bar width
-      const BAR_Y_OFF = 4;      // bar top offset from row top
+      const BAR_X = PL + 44;
+      const BAR_W = 26;
+      const BAR_Y_OFF = 4;
       const BAR_H = 4;
-      const TXT_Y_OFF = 9.5;    // text baseline offset from row top
-      const SCR_X  = PL + 74;   // score % right-aligned
-      const WGT_X  = PL + 94;   // weight right-aligned
-      const PTS_X  = PL + 114;  // pts right-aligned
-      const EXP_X  = PL + 118;  // explanation start
-      const EXP_W  = CW - 120;  // explanation max width
+      const TXT_Y_OFF = 9.5;
+      const SCR_X  = PL + 74;
+      const WGT_X  = PL + 94;
+      const PTS_X  = PL + 114;
+      const EXP_X  = PL + 118;
+      const EXP_W  = CW - 120;
 
-      // Table header
       sf(C.navy); fr(PL, y, CW, 9);
       sfont('bold', 7.5); st(C.white);
       tx('DIMENSION',   PL + 2,  y + 6.3);
@@ -855,14 +949,10 @@ async function exportPDF() {
         const score = (d.score || 0) * 100;
         totalPts += pts;
 
-        // 1. Draw row background first
         const rowBg = idx % 2 === 0 ? C.white : C.offwhite;
         sf(rowBg); fr(PL, y, CW, ROW_H);
-
-        // 2. Draw bar (on top of background, BELOW text)
         pbar(BAR_X, y + BAR_Y_OFF, BAR_W, BAR_H, score, C.accent);
 
-        // 3. Draw ALL text last so nothing covers it
         sfont('bold', 8); st(C.textDark);
         tx(dimName, PL + 2, y + TXT_Y_OFF);
 
@@ -880,12 +970,10 @@ async function exportPDF() {
         sfont('normal', 6.8); st(C.textDim);
         tx(expLines[0] || '', EXP_X, y + TXT_Y_OFF);
 
-        // Row divider
         sd(C.border); ln(PL, y + ROW_H, PL + CW, y + ROW_H);
         y += ROW_H;
       });
 
-      // Totals row
       checkY(12);
       sf(C.navy); fr(PL, y, CW, 11);
       sfont('bold', 9); st(C.white);
@@ -895,7 +983,6 @@ async function exportPDF() {
       y += 17;
     }
 
-    // Rationale box
     if (winnerData && winnerData.verdict_rationale) {
       checkY(28);
       const cleanRat = safe(
@@ -915,9 +1002,7 @@ async function exportPDF() {
       y += ratH + 8;
     }
 
-    // ════════════════════════════════════════════════════════════════════
     // PAGE 4 — FEATURE ANALYSIS
-    // ════════════════════════════════════════════════════════════════════
     newPage();
     sf(C.navy); fr(0, 0, W, 12);
     sfont('bold', 7.5); st(C.white);
@@ -930,7 +1015,6 @@ async function exportPDF() {
     const removed = fa.removed_features;
     const allRemoved = [...(removed.low_variance || []), ...(removed.redundant_correlations || [])];
 
-    // Stat boxes
     sf(C.offwhite); fr(PL, y, CW, 24);
     sd(C.border); doc.setLineWidth(0.2); doc.rect(PL, y, CW, 24, 'S');
     const fStats = [
@@ -949,7 +1033,6 @@ async function exportPDF() {
     });
     y += 28;
 
-    // Feature chips
     const renderChips = (feats, borderCol, bgCol, txtCol, label) => {
       if (!feats || feats.length === 0) return;
       checkY(16);
@@ -997,7 +1080,6 @@ async function exportPDF() {
       const FT_BAR_W  = CW - 104;
       const FT_SIG_X  = PL + CW - 2;
 
-      // Table header
       sf(C.navy); fr(PL, y, CW, 8);
       sfont('bold', 7.5); st(C.white);
       tx('RK',      PL + 2,     y + 5.5);
@@ -1016,14 +1098,10 @@ async function exportPDF() {
         const sigBg    = pct > 66 ? C.greenBg: (pct > 33 ? [226,240,255] : C.light);
         const sigTxt   = pct > 66 ? C.green  : (pct > 33 ? C.accentDk   : C.textDim);
 
-        // 1. Background
         const rowBg = idx % 2 === 0 ? C.white : C.offwhite;
         sf(rowBg); fr(PL, y, CW, FT_ROW_H);
-
-        // 2. Bar (behind text)
         pbar(FT_BAR_X, y + 3.5, FT_BAR_W, 4, pct, barCol);
 
-        // 3. All text last
         sfont('bold', 7.5); st(barCol);
         tx('#' + (r.rank || idx + 1), PL + 2, y + 7.8);
 
@@ -1040,7 +1118,6 @@ async function exportPDF() {
       });
     }
 
-    // ── Footer on every page ─────────────────────────────────────────
     const totalPages = doc.internal.getNumberOfPages();
     for (let pg = 1; pg <= totalPages; pg++) {
       doc.setPage(pg);
@@ -1084,12 +1161,14 @@ function toggleLog(header) {
 
 function resetApp() {
   currentFile = null; analysisData = null; predictColumns = [];
+  allFeatureColumns = []; selectedFeatureColumns = []; labelClasses = null;
   fileInput.value = '';
   document.getElementById('fileInfo').classList.add('hidden');
   document.getElementById('uploadSection').querySelector('.upload-area').classList.remove('hidden');
   document.getElementById('uploadSection').classList.remove('hidden');
   document.getElementById('resultsSection').classList.add('hidden');
   document.getElementById('analyzeBtn').disabled = true;
+  document.getElementById('featureSelectorSection').style.display = 'none';
 }
 
 function esc(str) {
@@ -1098,7 +1177,6 @@ function esc(str) {
     .replace(/"/g,'&quot;').replace(/'/g,'&#039;');
 }
 
-/* ── Load jsPDF for PDF export ─────────────────────────────── */
 (function loadJsPDF() {
   if (!window.jspdf) {
     const s = document.createElement('script');
