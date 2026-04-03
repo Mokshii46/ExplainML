@@ -21,6 +21,22 @@ from modules.model_trainer import train_and_evaluate
 from modules.verdict_engine import run_verdict_engine
 from modules.explainability import generate_explanations
 
+# 🔥 ADDED: Fix numpy → JSON issue
+def convert_numpy(obj):
+    if isinstance(obj, dict):
+        return {k: convert_numpy(v) for k, v in obj.items()}
+    elif isinstance(obj, list):
+        return [convert_numpy(v) for v in obj]
+    elif isinstance(obj, (np.integer,)):
+        return int(obj)
+    elif isinstance(obj, (np.floating,)):
+        return float(obj)
+    elif isinstance(obj, (np.ndarray,)):
+        return obj.tolist()
+    else:
+        return obj
+
+
 app = FastAPI(title="ModelIQ - Explainable AutoML Advisor", version="1.0.0")
 
 app.add_middleware(
@@ -30,11 +46,8 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# ── In-memory session store for trained models ─────────────────────────────
-# Stores the last trained pipeline so /api/predict can reuse it
 _session: dict = {}
 
-# Serve frontend
 FRONTEND_DIR = os.path.join(os.path.dirname(__file__), "..", "frontend")
 if os.path.exists(FRONTEND_DIR):
     app.mount("/static", StaticFiles(directory=FRONTEND_DIR), name="static")
@@ -51,7 +64,6 @@ def health():
 
 @app.post("/api/columns")
 async def get_columns(file: UploadFile = File(...)):
-    """Returns column names so user can pick the target column."""
     try:
         content = await file.read()
         df = _read_file(content, file.filename)
@@ -66,23 +78,9 @@ async def get_columns(file: UploadFile = File(...)):
 
 
 @app.post("/api/analyze")
-async def analyze(
-    file: UploadFile = File(...),
-    target_col: str = Form(...),
-):
-    """
-    Full AutoML pipeline:
-    1. Load data
-    2. Detect problem type
-    3. Preprocess
-    4. Feature intelligence
-    5. Train models (5-fold CV, full accuracy)
-    6. Verdict Engine (deterministic scoring)
-    7. Explanations (SHAP)
-    """
+async def analyze(file: UploadFile = File(...), target_col: str = Form(...)):
     global _session
     try:
-        # 1 — Load
         content = await file.read()
         df = _read_file(content, file.filename)
 
@@ -93,25 +91,19 @@ async def analyze(
 
         df = df.dropna(subset=[target_col]).reset_index(drop=True)
 
-        # 2 — Detect
         problem_detection = detect_problem_type(df, target_col)
         problem_type = problem_detection["problem_type"]
 
-        # 3 — Preprocess
         X, y, preprocessing_log = preprocess(df, target_col, problem_type)
 
-        # 4 — Feature intelligence
         X_selected, feature_report = analyze_features(X, y, problem_type)
         if X_selected.shape[1] == 0:
             raise HTTPException(status_code=400, detail="No features remaining after preprocessing.")
 
-        # 5 — Train
         model_metrics, trained_models = train_and_evaluate(X_selected, y, problem_type)
 
-        # 6 — Verdict Engine
         verdict = run_verdict_engine(model_metrics, problem_type)
 
-        # 7 — Explainability
         explanations = {}
         winner_name = verdict.get("winner")
         if winner_name and winner_name in trained_models:
@@ -123,13 +115,10 @@ async def analyze(
                 winner_name=winner_name,
             )
 
-        # ── Cache pipeline for /api/predict ───────────────────────────────
-        # Store the preprocessing pipeline so we can transform new inputs identically
-        _, _, preprocessing_log_full = preprocess(df, target_col, problem_type)
-        
-        # Re-run preprocess to get fitted encoders/scalers - store column metadata
+        _, _, _ = preprocess(df, target_col, problem_type)
+
         original_cols = [c for c in df.columns if c != target_col]
-        
+
         _session = {
             "winner_name": winner_name,
             "winner_model": trained_models.get(winner_name),
@@ -137,11 +126,12 @@ async def analyze(
             "feature_names": list(X_selected.columns),
             "problem_type": problem_type,
             "target_col": target_col,
-            "original_df": df,          # Used to refit transforms for prediction
+            "original_df": df,
             "problem_detection": problem_detection,
         }
 
-        return {
+        # 🔥 FIXED RETURN
+        response = {
             "status": "success",
             "dataset_info": {
                 "rows": int(df.shape[0]),
@@ -157,6 +147,8 @@ async def analyze(
             "predict_ready": True,
             "predict_columns": original_cols,
         }
+
+        return convert_numpy(response)
 
     except HTTPException:
         raise
@@ -178,11 +170,10 @@ async def predict(request: Request):
     try:
         winner_model = _session["winner_model"]
         problem_type = _session["problem_type"]
-        target_col   = _session["target_col"]
-        original_df  = _session["original_df"]
+        target_col = _session["target_col"]
+        original_df = _session["original_df"]
         feature_names = _session["feature_names"]
 
-        # ✅ Build input row
         row = {}
         for col in original_df.columns:
             if col == target_col:
@@ -202,7 +193,6 @@ async def predict(request: Request):
 
         predict_row = pd.DataFrame([row])
 
-        # ✅ Add dummy target (needed for preprocessing)
         dummy_target = (
             original_df[target_col].mode()[0]
             if problem_type == "classification"
@@ -210,30 +200,20 @@ async def predict(request: Request):
         )
         predict_row[target_col] = dummy_target
 
-        # ✅ Combine with original data
         combined = pd.concat([original_df, predict_row], ignore_index=True)
 
-        # ✅ ONLY preprocess (NO feature selection)
         X_combined, _, _ = preprocess(combined, target_col, problem_type)
 
-        # ✅ Take last row
         X_new = X_combined.iloc[[-1]]
 
-        # ✅ Align columns with training
         for col in feature_names:
             if col not in X_new.columns:
                 X_new[col] = 0
 
         X_new = X_new[feature_names]
 
-        # ✅ DEBUG (optional)
-        print("Expected:", len(feature_names))
-        print("Got:", X_new.shape[1])
-
-        # ✅ Predict
         raw_pred = winner_model.predict(X_new.values)[0]
 
-        # ✅ Classification extras
         confidence = None
         class_probabilities = None
 
@@ -245,7 +225,7 @@ async def predict(request: Request):
                 for c, p in zip(winner_model.classes_, proba)
             }
 
-        return {
+        response = {
             "status": "success",
             "prediction": float(raw_pred) if isinstance(raw_pred, (np.integer, np.floating)) else str(raw_pred),
             "problem_type": problem_type,
@@ -254,6 +234,8 @@ async def predict(request: Request):
             "class_probabilities": class_probabilities,
             "target_column": target_col,
         }
+
+        return convert_numpy(response)
 
     except Exception as e:
         traceback.print_exc()
